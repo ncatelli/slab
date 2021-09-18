@@ -1,2 +1,2 @@
-# ownerpool
-A typed memory pool providing references to it's containing types.
+# Slab 
+A typed no-std slab allocator.
