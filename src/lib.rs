@@ -2,6 +2,7 @@
 
 extern crate alloc;
 use alloc::alloc::{GlobalAlloc, Layout};
+use core::ptr;
 
 #[derive(Debug)]
 pub struct Chunk<T> {
@@ -9,9 +10,36 @@ pub struct Chunk<T> {
     inner: [Option<T>; usize::BITS as usize],
 }
 
+impl<T> Chunk<T> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl<T> Default for Chunk<T> {
+    #[allow(clippy::uninit_assumed_init)]
+    fn default() -> Self {
+        use core::mem::MaybeUninit;
+        const ELEMS: usize = usize::BITS as usize;
+        let inner = {
+            let mut data: [Option<T>; ELEMS] = unsafe { MaybeUninit::uninit().assume_init() };
+
+            for elem in &mut data[..] {
+                *elem = None;
+            }
+            data
+        };
+
+        Self {
+            free_list: usize::MAX,
+            inner,
+        }
+    }
+}
+
 pub struct SlabAllocator<T> {
-    start: *mut [Chunk<T>],
     len: usize,
+    start: *mut Chunk<T>,
 }
 
 impl<T> SlabAllocator<T> {
@@ -31,15 +59,11 @@ impl<T> SlabAllocator<T> {
     /// allocator has been mapped to a region of memory **atleast** the size
     /// of the `SlabAllocator<T>` and its constituent chunks.
     pub unsafe fn init(&mut self, chunks: u8) {
-        use core::mem;
-
-        let start_of_chunks =
-            (((self as *mut Self) as usize) + mem::size_of::<Self>()) as *mut Chunk<T>;
         let chunk_cnt = (chunks & Self::CHUNK_MAX) as usize;
-        let chunks = core::ptr::slice_from_raw_parts_mut(start_of_chunks, chunk_cnt);
+        let start = (self as *const Self).add(1) as *mut Chunk<T>;
 
-        self.start = chunks;
         self.len = chunk_cnt;
+        self.start = start;
     }
 
     /// Returns the minimum required size of the given allocator
@@ -56,10 +80,9 @@ impl<T> SlabAllocator<T> {
 #[allow(clippy::zero_ptr)]
 impl<T> Default for SlabAllocator<T> {
     fn default() -> Self {
-        let null_chunk = 0 as *mut Chunk<T>;
         Self {
-            start: core::ptr::slice_from_raw_parts_mut(null_chunk, 0),
             len: 0,
+            start: ptr::null_mut(),
         }
     }
 }
@@ -91,7 +114,6 @@ pub const fn align_up(addr: usize, align: usize) -> usize {
 mod tests {
     use super::*;
 
-    #[ignore = "need to resize tests to align on chunk slice"]
     #[test]
     fn should_align_test_to_atleast_header_size() {
         use core::mem;
@@ -104,5 +126,14 @@ mod tests {
                 SlabAllocator::<u8>::required_size(chunks)
             )
         });
+    }
+
+    #[test]
+    fn should_default_chunk_inner_to_none() {
+        let chunk = Chunk::<u8>::default();
+
+        for chunk in (chunk.inner).iter() {
+            assert_eq!(&None, chunk)
+        }
     }
 }
