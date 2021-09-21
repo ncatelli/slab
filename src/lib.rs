@@ -4,6 +4,13 @@ extern crate alloc;
 use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;
 
+#[derive(Debug, Clone)]
+pub struct Box<T> {
+    mask: usize,
+    chunk: *mut Chunk<T>,
+    inner: *mut T,
+}
+
 #[derive(Debug)]
 pub struct Chunk<T> {
     free_list: usize,
@@ -11,8 +18,25 @@ pub struct Chunk<T> {
 }
 
 impl<T> Chunk<T> {
+    /// The maximum number of elements in the chunk.
+    const ELEMS: usize = usize::BITS as usize;
+
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Finds the first 1 bit, representing a free cell in the allocator. If
+    /// the chunk is full, None is returned. Otherwise the index into the cell
+    /// is returned.
+    fn first_free(&self) -> Option<usize> {
+        let leading_zeros = self.free_list.leading_zeros() as usize;
+
+        // if all bits are allocated return None
+        if leading_zeros == Self::ELEMS {
+            None
+        } else {
+            Some(leading_zeros)
+        }
     }
 }
 
@@ -20,7 +44,9 @@ impl<T> Default for Chunk<T> {
     #[allow(clippy::uninit_assumed_init)]
     fn default() -> Self {
         use core::mem::MaybeUninit;
+
         const ELEMS: usize = usize::BITS as usize;
+
         let inner = {
             let mut data: [Option<T>; ELEMS] = unsafe { MaybeUninit::uninit().assume_init() };
 
