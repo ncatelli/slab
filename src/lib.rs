@@ -96,7 +96,7 @@ impl<T> SlabAllocator<T> {
         use core::mem;
         let chunks = (chunks & Self::CHUNK_MAX) as usize;
         let header_size = mem::size_of::<Self>();
-        let chunks_size = mem::size_of::<Option<Chunk<T>>>() * chunks;
+        let chunks_size = mem::size_of::<Chunk<T>>() * chunks;
 
         header_size + chunks_size
     }
