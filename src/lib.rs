@@ -37,6 +37,16 @@ impl<T> Chunk<T> {
             Some(leading_zeros)
         }
     }
+
+    /// Returns true if no cells have been allocated.
+    pub fn empty(&self) -> bool {
+        self.free_list == usize::MAX
+    }
+
+    /// Returns true if all cells have been allocated.
+    pub fn full(&self) -> bool {
+        self.free_list == usize::MIN
+    }
 }
 
 impl<T> Default for Chunk<T> {
@@ -77,6 +87,53 @@ impl<T> SlabAllocator<T> {
         Self::default()
     }
 
+    /// Allocates a value, returning a box to it.
+    pub fn boxed(&mut self, _value: T) -> Box<T> {
+        todo!()
+    }
+
+    /// finds the first free chunk.
+    ///
+    /// # Safety
+    /// Caller must validate that the Allocator has been initialized with
+    /// atleast one chunk.
+    unsafe fn find_chunk_with_space(&self) -> Option<usize> {
+        for chunk_offset in 0..(Self::CHUNK_MAX as usize) {
+            let chunk = self.borrow_chunk(chunk_offset)?;
+            if !chunk.full() {
+                return Some(chunk_offset);
+            }
+        }
+
+        None
+    }
+
+    /// Borrows a chunk determined by a given offset. This value must be less
+    /// than the Slab's max chunk count.
+    fn borrow_chunk(&self, offset: usize) -> Option<&Chunk<T>> {
+        if offset < Self::CHUNK_MAX as usize {
+            unsafe {
+                let chunk = (self as *const Self).add(offset) as *mut Chunk<T>;
+                chunk.as_ref()
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Borrows a chunk determined by a given offset. This value must be less
+    /// than the Slab's max chunk count.
+    fn borrow_chunk_mut(&mut self, offset: usize) -> Option<&mut Chunk<T>> {
+        if offset < Self::CHUNK_MAX as usize {
+            unsafe {
+                let chunk = (self as *const Self).add(offset) as *mut Chunk<T>;
+                chunk.as_mut()
+            }
+        } else {
+            None
+        }
+    }
+
     /// Initializes a new slab allocator
     ///
     /// # Safety
@@ -112,16 +169,12 @@ impl<T> Default for SlabAllocator<T> {
     }
 }
 
-/// Aligns an address up to a given alignment.
-///
-/// Alignment must be a power of 2.
-pub const fn align_up(addr: usize, align: usize) -> usize {
-    let remainder = addr & align;
-    if remainder == 0 {
-        addr
-    } else {
-        addr - remainder + align
-    }
+pub const fn alloc_mask(pos: u8) -> usize {
+    usize::MAX ^ (1 << pos)
+}
+
+pub const fn free_mask(pos: u8) -> usize {
+    !(usize::MAX ^ (1 << pos))
 }
 
 #[cfg(test)]
