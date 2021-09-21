@@ -1,7 +1,6 @@
 #![no_std]
 
 extern crate alloc;
-use alloc::alloc::{GlobalAlloc, Layout};
 use core::ptr;
 
 #[derive(Debug, Clone)]
@@ -111,17 +110,6 @@ impl<T> Default for SlabAllocator<T> {
             start: ptr::null_mut(),
         }
     }
-}
-
-unsafe impl<T> GlobalAlloc for SlabAllocator<T>
-where
-    T: Default,
-{
-    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        core::ptr::null_mut()
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
 }
 
 /// Aligns an address up to a given alignment.
