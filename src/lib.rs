@@ -36,16 +36,7 @@ where
     }
 }
 
-impl<T> PartialOrd<T> for Box<T>
-where
-    T: PartialOrd,
-{
-    fn partial_cmp(&self, other: &T) -> Option<core::cmp::Ordering> {
-        self.as_ref().partial_cmp(other)
-    }
-}
-
-impl<T> Eq for Box<T> where T: PartialEq {}
+impl<T> Eq for Box<T> where T: Eq {}
 
 impl<T> core::ops::Deref for Box<T> {
     type Target = T;
