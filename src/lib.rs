@@ -15,6 +15,18 @@ pub struct Box<T> {
     inner: *mut T,
 }
 
+impl<T> AsRef<T> for Box<T> {
+    fn as_ref(&self) -> &T {
+        unsafe { self.inner.as_ref().unwrap() }
+    }
+}
+
+impl<T> AsMut<T> for Box<T> {
+    fn as_mut(&mut self) -> &mut T {
+        unsafe { self.inner.as_mut().unwrap() }
+    }
+}
+
 impl<T> PartialEq<T> for Box<T>
 where
     T: PartialEq,
@@ -29,7 +41,7 @@ where
     T: PartialOrd,
 {
     fn partial_cmp(&self, other: &T) -> Option<core::cmp::Ordering> {
-        unsafe { self.inner.as_ref().partial_cmp(&Some(other)) }
+        self.as_ref().partial_cmp(other)
     }
 }
 
@@ -39,15 +51,13 @@ impl<T> core::ops::Deref for Box<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        let inner = unsafe { self.inner.as_ref() }.expect("inner couldn't be borrowed");
-        inner
+        self.as_ref()
     }
 }
 
 impl<T> core::ops::DerefMut for Box<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let inner = unsafe { self.inner.as_mut() }.expect("inner couldn't be borrowed");
-        inner
+        self.as_mut()
     }
 }
 
