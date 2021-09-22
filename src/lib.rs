@@ -129,7 +129,7 @@ impl<T> Default for Chunk<T> {
 ///  let mut slab = SlabAllocator::<u8, 1>::new();
 ///  let optional_boxed_five = slab.boxed(5);
 ///
-///  assert!(optional_boxed_five.unwrap() == 5u8);
+///  assert!(optional_boxed_five.unwrap().as_ref() == &5u8);
 ///
 /// ```
 pub struct SlabAllocator<T, const N: usize> {
