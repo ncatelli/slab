@@ -8,7 +8,7 @@ extern crate alloc;
 /// # Warnings
 /// This internal type makes no guarantees of compatibility or even api
 /// similarity. With the `alloc::boxed::Box` implementation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Box<T> {
     free_mask: usize,
     chunk: *mut Chunk<T>,
@@ -21,6 +21,15 @@ where
 {
     fn eq(&self, other: &T) -> bool {
         unsafe { self.inner.as_ref() == Some(other) }
+    }
+}
+
+impl<T> PartialOrd<T> for Box<T>
+where
+    T: PartialOrd,
+{
+    fn partial_cmp(&self, other: &T) -> Option<core::cmp::Ordering> {
+        unsafe { self.inner.as_ref().partial_cmp(&Some(other)) }
     }
 }
 
