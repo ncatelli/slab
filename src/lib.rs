@@ -2,6 +2,12 @@
 
 extern crate alloc;
 
+/// A custom, and minimal, `Box`-like implementation for the time being. This
+/// is acting as a placeholder until the allocator api stabilizes.
+///
+/// # Warnings
+/// This internal type makes no guarantees of compatibility or even api
+/// similarity. With the `alloc::boxed::Box` implementation.
 #[derive(Debug, Clone)]
 pub struct Box<T> {
     free_mask: usize,
@@ -33,6 +39,9 @@ impl<T> Drop for Box<T> {
     }
 }
 
+/// Chunk is a typed segment of memory consisting of a fixed number of cells
+/// represented by the bit-width of the architectures pointer type. The Chunk
+/// handles tracking allocation of cells.
 #[derive(Debug)]
 pub struct Chunk<T> {
     free_list: usize,
@@ -43,8 +52,17 @@ impl<T> Chunk<T> {
     /// The maximum number of elements in the chunk.
     const ELEMS: usize = usize::BITS as usize;
 
+    /// Initializes a new empty chunk.
+    #[allow(clippy::uninit_assumed_init)]
     pub fn new() -> Self {
-        Self::default()
+        use core::mem::MaybeUninit;
+
+        let inner = { unsafe { MaybeUninit::uninit().assume_init() } };
+
+        Self {
+            free_list: usize::MAX,
+            inner,
+        }
     }
 
     /// Finds the first 1 bit, representing a free cell in the allocator. If
@@ -73,19 +91,26 @@ impl<T> Chunk<T> {
 }
 
 impl<T> Default for Chunk<T> {
-    #[allow(clippy::uninit_assumed_init)]
     fn default() -> Self {
-        use core::mem::MaybeUninit;
-
-        let inner = { unsafe { MaybeUninit::uninit().assume_init() } };
-
-        Self {
-            free_list: usize::MAX,
-            inner,
-        }
+        Self::new()
     }
 }
 
+/// Provides a SlabAllocator implementation containing a constantly defined
+/// array of sequential `Chunks` for a type.
+///
+/// # Example
+///
+/// ```
+///  extern crate std;
+///  use slab::*;
+///
+///  let mut slab = SlabAllocator::<u8, 1>::new();
+///  let optional_boxed_five = slab.boxed(5);
+///
+///  assert_eq!(Some(5), optional_boxed_five.map(|boxed| *boxed));
+///
+/// ```
 pub struct SlabAllocator<T, const N: usize> {
     chunks: [Chunk<T>; N],
 }
@@ -164,20 +189,22 @@ impl<T, const N: usize> Default for SlabAllocator<T, N> {
     }
 }
 
-pub const fn alloc_mask(pos: u8) -> usize {
+/// Generates a mask for a given position used to assign an allocation to a chunk.
+const fn alloc_mask(pos: u8) -> usize {
     let shift = ((usize::BITS - 1) as usize) - pos as usize;
     usize::MAX ^ (1 << shift)
 }
 
-pub const fn free_mask(pos: u8) -> usize {
+/// Generates the mask for a given postion to free an allocation on a chunk.
+const fn free_mask(pos: u8) -> usize {
     let shift = ((usize::BITS - 1) as usize) - pos as usize;
     !usize::MAX ^ (1 << shift)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     extern crate std;
+    use super::*;
 
     #[test]
     fn should_mask_off_allocation() {
