@@ -8,12 +8,23 @@ extern crate alloc;
 /// # Warnings
 /// This internal type makes no guarantees of compatibility or even api
 /// similarity. With the `alloc::boxed::Box` implementation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Box<T> {
     free_mask: usize,
     chunk: *mut Chunk<T>,
     inner: *mut T,
 }
+
+impl<T> PartialEq<T> for Box<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        unsafe { self.inner.as_ref() == Some(other) }
+    }
+}
+
+impl<T> Eq for Box<T> where T: PartialEq {}
 
 impl<T> core::ops::Deref for Box<T> {
     type Target = T;
@@ -108,7 +119,7 @@ impl<T> Default for Chunk<T> {
 ///  let mut slab = SlabAllocator::<u8, 1>::new();
 ///  let optional_boxed_five = slab.boxed(5);
 ///
-///  assert_eq!(Some(5), optional_boxed_five.map(|boxed| *boxed));
+///  assert!(optional_boxed_five.unwrap() == 5u8);
 ///
 /// ```
 pub struct SlabAllocator<T, const N: usize> {
