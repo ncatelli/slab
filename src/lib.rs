@@ -1,19 +1,42 @@
 #![no_std]
 
 extern crate alloc;
-use core::ptr;
 
 #[derive(Debug, Clone)]
 pub struct Box<T> {
-    mask: usize,
+    free_mask: usize,
     chunk: *mut Chunk<T>,
     inner: *mut T,
+}
+
+impl<T> core::ops::Deref for Box<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        let inner = unsafe { self.inner.as_ref() }.expect("inner couldn't be borrowed");
+        inner
+    }
+}
+
+impl<T> core::ops::DerefMut for Box<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        let inner = unsafe { self.inner.as_mut() }.expect("inner couldn't be borrowed");
+        inner
+    }
+}
+
+impl<T> Drop for Box<T> {
+    fn drop(&mut self) {
+        let chunk = unsafe { self.chunk.as_mut() }.expect("chunk couldn't be borrowed");
+
+        chunk.free_list |= self.free_mask;
+    }
 }
 
 #[derive(Debug)]
 pub struct Chunk<T> {
     free_list: usize,
-    inner: [Option<T>; usize::BITS as usize],
+    inner: [T; usize::BITS as usize],
 }
 
 impl<T> Chunk<T> {
@@ -54,16 +77,7 @@ impl<T> Default for Chunk<T> {
     fn default() -> Self {
         use core::mem::MaybeUninit;
 
-        const ELEMS: usize = usize::BITS as usize;
-
-        let inner = {
-            let mut data: [Option<T>; ELEMS] = unsafe { MaybeUninit::uninit().assume_init() };
-
-            for elem in &mut data[..] {
-                *elem = None;
-            }
-            data
-        };
+        let inner = { unsafe { MaybeUninit::uninit().assume_init() } };
 
         Self {
             free_list: usize::MAX,
@@ -72,12 +86,11 @@ impl<T> Default for Chunk<T> {
     }
 }
 
-pub struct SlabAllocator<T> {
-    len: usize,
-    start: *mut Chunk<T>,
+pub struct SlabAllocator<T, const N: usize> {
+    chunks: [Chunk<T>; N],
 }
 
-impl<T> SlabAllocator<T> {
+impl<T, const N: usize> SlabAllocator<T, N> {
     /// Represents the maximum number of chunks allowed in the allocator. This
     /// is equivalent to the number of bits of the pointer type.
     const CHUNK_MAX: u8 = (usize::BITS as u8 - 1);
@@ -88,16 +101,31 @@ impl<T> SlabAllocator<T> {
     }
 
     /// Allocates a value, returning a box to it.
-    pub fn boxed(&mut self, _value: T) -> Box<T> {
-        todo!()
+    pub fn boxed(&mut self, value: T) -> Option<Box<T>> {
+        let optional_chunk = self.find_chunk_with_space();
+        optional_chunk.map(|offset| {
+            let chunk = self.borrow_chunk_mut(offset).unwrap();
+            // safe to unwrap due to above free space guarantee.
+            let free_cell_offset = chunk.first_free().unwrap();
+
+            let cell_ptr = {
+                let cell = &mut chunk.inner[free_cell_offset];
+                *cell = value;
+                cell as *mut T
+            };
+
+            (*chunk).free_list &= alloc_mask(free_cell_offset as u8);
+
+            Box {
+                free_mask: free_mask(free_cell_offset as u8),
+                chunk: chunk as *mut Chunk<T>,
+                inner: cell_ptr as *mut T,
+            }
+        })
     }
 
     /// finds the first free chunk.
-    ///
-    /// # Safety
-    /// Caller must validate that the Allocator has been initialized with
-    /// atleast one chunk.
-    unsafe fn find_chunk_with_space(&self) -> Option<usize> {
+    fn find_chunk_with_space(&self) -> Option<usize> {
         for chunk_offset in 0..(Self::CHUNK_MAX as usize) {
             let chunk = self.borrow_chunk(chunk_offset)?;
             if !chunk.full() {
@@ -111,96 +139,100 @@ impl<T> SlabAllocator<T> {
     /// Borrows a chunk determined by a given offset. This value must be less
     /// than the Slab's max chunk count.
     fn borrow_chunk(&self, offset: usize) -> Option<&Chunk<T>> {
-        if offset < Self::CHUNK_MAX as usize {
-            unsafe {
-                let chunk = (self as *const Self).add(offset) as *mut Chunk<T>;
-                chunk.as_ref()
-            }
-        } else {
-            None
-        }
+        self.chunks.get(offset)
     }
 
     /// Borrows a chunk determined by a given offset. This value must be less
     /// than the Slab's max chunk count.
     fn borrow_chunk_mut(&mut self, offset: usize) -> Option<&mut Chunk<T>> {
-        if offset < Self::CHUNK_MAX as usize {
-            unsafe {
-                let chunk = (self as *const Self).add(offset) as *mut Chunk<T>;
-                chunk.as_mut()
-            }
-        } else {
-            None
-        }
-    }
-
-    /// Initializes a new slab allocator
-    ///
-    /// # Safety
-    /// Caller guarantees that this method is only called once, and that the
-    /// allocator has been mapped to a region of memory **atleast** the size
-    /// of the `SlabAllocator<T>` and its constituent chunks.
-    pub unsafe fn init(&mut self, chunks: u8) {
-        let chunk_cnt = (chunks & Self::CHUNK_MAX) as usize;
-        let start = (self as *const Self).add(1) as *mut Chunk<T>;
-
-        self.len = chunk_cnt;
-        self.start = start;
-    }
-
-    /// Returns the minimum required size of the given allocator
-    pub const fn required_size(chunks: u8) -> usize {
-        use core::mem;
-        let chunks = (chunks & Self::CHUNK_MAX) as usize;
-        let header_size = mem::size_of::<Self>();
-        let chunks_size = mem::size_of::<Chunk<T>>() * chunks;
-
-        header_size + chunks_size
+        self.chunks.get_mut(offset)
     }
 }
 
 #[allow(clippy::zero_ptr)]
-impl<T> Default for SlabAllocator<T> {
+impl<T, const N: usize> Default for SlabAllocator<T, N> {
+    #[allow(clippy::uninit_assumed_init)]
     fn default() -> Self {
-        Self {
-            len: 0,
-            start: ptr::null_mut(),
+        use core::mem::MaybeUninit;
+
+        let mut chunks: [Chunk<T>; N] = { unsafe { MaybeUninit::uninit().assume_init() } };
+        for chunk in chunks.iter_mut() {
+            *chunk = Chunk::<T>::default();
         }
+
+        Self { chunks }
     }
 }
 
 pub const fn alloc_mask(pos: u8) -> usize {
-    usize::MAX ^ (1 << pos)
+    let shift = ((usize::BITS - 1) as usize) - pos as usize;
+    usize::MAX ^ (1 << shift)
 }
 
 pub const fn free_mask(pos: u8) -> usize {
-    !(usize::MAX ^ (1 << pos))
+    let shift = ((usize::BITS - 1) as usize) - pos as usize;
+    !usize::MAX ^ (1 << shift)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate std;
 
     #[test]
-    fn should_align_test_to_atleast_header_size() {
-        use core::mem;
-        let expected_allocator_overhead = (usize::BITS as usize / 8) * 2;
-        let expected_chunk_overhead = ((usize::BITS as usize) / 8) + (mem::size_of::<u8>() * 64);
+    fn should_mask_off_allocation() {
+        let mut slab = SlabAllocator::<u8, 1>::new();
+        let optional_boxed_five = slab.boxed(5);
 
-        (0..=0).into_iter().for_each(|chunks| {
-            assert_eq!(
-                expected_allocator_overhead + (expected_chunk_overhead * (chunks as usize)),
-                SlabAllocator::<u8>::required_size(chunks)
-            )
-        });
+        assert_eq!(
+            Some(usize::MAX >> 1),
+            slab.borrow_chunk(0).map(|chunk| chunk.free_list)
+        );
+        assert_eq!(Some(5), optional_boxed_five.map(|boxed| *boxed));
+
+        // check freed after drop
+        assert_eq!(
+            Some(usize::MAX),
+            slab.borrow_chunk(0).map(|chunk| chunk.free_list)
+        );
     }
 
     #[test]
-    fn should_default_chunk_inner_to_none() {
-        let chunk = Chunk::<u8>::default();
+    fn should_safely_drop_multiple_allocations() {
+        let mut slab = SlabAllocator::<u8, 1>::new();
+        let boxed_values: alloc::vec::Vec<_> = (0..usize::BITS as u8)
+            .into_iter()
+            .map(|x| slab.boxed(x))
+            .collect();
 
-        for chunk in (chunk.inner).iter() {
-            assert_eq!(&None, chunk)
-        }
+        assert_eq!(Some(0), slab.borrow_chunk(0).map(|chunk| chunk.free_list));
+
+        core::mem::drop(boxed_values);
+        assert_eq!(
+            Some(usize::MAX),
+            slab.borrow_chunk(0).map(|chunk| chunk.free_list)
+        );
+    }
+
+    #[test]
+    fn should_allow_allocations_over_multiple_chunks() {
+        let mut slab = SlabAllocator::<u8, 2>::new();
+        let boxed_values: alloc::vec::Vec<_> = (0..(usize::BITS * 2) as u8)
+            .into_iter()
+            .map(|x| slab.boxed(x))
+            .collect();
+
+        assert_eq!(Some(0), slab.borrow_chunk(0).map(|chunk| chunk.free_list));
+        assert_eq!(Some(0), slab.borrow_chunk(1).map(|chunk| chunk.free_list));
+
+        core::mem::drop(boxed_values);
+        assert_eq!(
+            Some(usize::MAX),
+            slab.borrow_chunk(0).map(|chunk| chunk.free_list)
+        );
+        assert_eq!(
+            Some(usize::MAX),
+            slab.borrow_chunk(1).map(|chunk| chunk.free_list)
+        );
     }
 }
