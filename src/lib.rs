@@ -8,26 +8,56 @@ extern crate alloc;
 /// # Warnings
 /// This internal type makes no guarantees of compatibility or even api
 /// similarity. With the `alloc::boxed::Box` implementation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct Box<T> {
     free_mask: usize,
     chunk: *mut Chunk<T>,
     inner: *mut T,
 }
 
+impl<T> core::fmt::Display for Box<T>
+where
+    T: core::fmt::Display,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_ref())
+    }
+}
+
+impl<T> AsRef<T> for Box<T> {
+    fn as_ref(&self) -> &T {
+        unsafe { self.inner.as_ref().unwrap() }
+    }
+}
+
+impl<T> AsMut<T> for Box<T> {
+    fn as_mut(&mut self) -> &mut T {
+        unsafe { self.inner.as_mut().unwrap() }
+    }
+}
+
+impl<T> PartialEq<T> for Box<T>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &T) -> bool {
+        unsafe { self.inner.as_ref() == Some(other) }
+    }
+}
+
+impl<T> Eq for Box<T> where T: Eq {}
+
 impl<T> core::ops::Deref for Box<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        let inner = unsafe { self.inner.as_ref() }.expect("inner couldn't be borrowed");
-        inner
+        self.as_ref()
     }
 }
 
 impl<T> core::ops::DerefMut for Box<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        let inner = unsafe { self.inner.as_mut() }.expect("inner couldn't be borrowed");
-        inner
+        self.as_mut()
     }
 }
 
@@ -108,7 +138,7 @@ impl<T> Default for Chunk<T> {
 ///  let mut slab = SlabAllocator::<u8, 1>::new();
 ///  let optional_boxed_five = slab.boxed(5);
 ///
-///  assert_eq!(Some(5), optional_boxed_five.map(|boxed| *boxed));
+///  assert!(optional_boxed_five.unwrap().as_ref() == &5u8);
 ///
 /// ```
 pub struct SlabAllocator<T, const N: usize> {
