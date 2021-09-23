@@ -15,6 +15,15 @@ pub struct Box<T> {
     inner: *mut T,
 }
 
+impl<T> core::fmt::Display for Box<T>
+where
+    T: core::fmt::Display,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_ref())
+    }
+}
+
 impl<T> AsRef<T> for Box<T> {
     fn as_ref(&self) -> &T {
         unsafe { self.inner.as_ref().unwrap() }

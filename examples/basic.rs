@@ -1,5 +1,4 @@
 use slab::*;
-
 const CHUNKS: usize = usize::BITS as usize;
 
 fn main() {
@@ -7,8 +6,10 @@ fn main() {
 
     let boxed_values: Vec<_> = (0..(usize::BITS * 32) as u32)
         .into_iter()
-        .map(|x| slab.boxed(x))
+        .map(|x| slab.boxed(x).unwrap())
         .collect();
 
-    println!("{:#?}", &boxed_values)
+    for x in boxed_values.iter() {
+        println!("{}", x);
+    }
 }
